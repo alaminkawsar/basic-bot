@@ -9,14 +9,14 @@ class ChatBotApp:
     def __init__(self, root):
         self.root = root
         self.root.title("AI File ChatBot")
-        self.root.geometry("750x850")
+        self.root.geometry("780x900")
         self.root.configure(bg="#ECECEC")
 
         # Files
         self.file1 = None
         self.file2 = None
 
-        # Chat canvas + scrollbar (modern style)
+        # Chat canvas with scrollbar
         self.canvas = Canvas(root, bg="#ECECEC", highlightthickness=0)
         self.scrollbar = tk.Scrollbar(root, command=self.canvas.yview)
         self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -38,16 +38,17 @@ class ChatBotApp:
         tk.Button(file_frame, text="⚖ Compare Files", bg="#28A745", fg="white",
                   font=("Arial", 10, "bold"), command=self.compare_files).pack(side=tk.RIGHT, padx=5)
 
-        # Input frame
+        # Input frame (larger text field)
         input_frame = tk.Frame(root, bg="#ECECEC")
         input_frame.pack(fill=tk.X, padx=10, pady=10)
 
-        self.input_box = tk.Entry(input_frame, font=("Arial", 13))
+        self.input_box = tk.Text(input_frame, height=3, font=("Arial", 13), wrap=tk.WORD)
         self.input_box.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
         self.input_box.bind("<Return>", self.send_message)
+        self.input_box.bind("<Shift-Return>", lambda e: self.input_box.insert(tk.INSERT, "\n"))
 
         tk.Button(input_frame, text="Send", bg="#0078D7", fg="white",
-                  font=("Arial", 11, "bold"), command=self.send_message).pack(side=tk.RIGHT)
+                  font=("Arial", 12, "bold"), command=self.send_message).pack(side=tk.RIGHT)
 
         # Chat history
         self.history_file = "chat_history.json"
@@ -58,36 +59,43 @@ class ChatBotApp:
 
     # ---------------- Chat UI ----------------
     def add_message(self, sender, text):
-        """Add message bubble to the chat."""
-        frame = tk.Frame(self.chat_frame, bg="#ECECEC", pady=5)
-        frame.pack(anchor="e" if sender == "You" else "w", fill="x", padx=10)
+        """Add message bubble with alignment and optional bot icon."""
+        outer = tk.Frame(self.chat_frame, bg="#ECECEC", pady=5)
+        outer.pack(anchor="e" if sender == "You" else "w", fill="x", padx=10)
 
         color = "#DCF8C6" if sender == "You" else "#FFFFFF"
-        anchor = "e" if sender == "You" else "w"
+        justify = "right" if sender == "You" else "left"
 
-        msg_frame = tk.Frame(frame, bg=color, padx=10, pady=6)
-        msg_frame.pack(anchor=anchor, padx=5, pady=2)
+        # Add icon for bot
+        if sender == "Bot":
+            icon_label = tk.Label(outer, text="🤖", bg="#ECECEC", font=("Arial", 13))
+            icon_label.pack(side=tk.LEFT, anchor="w", padx=(0, 5))
 
-        tk.Label(msg_frame, text=text, bg=color, fg="black", wraplength=500,
-                 justify="left", font=("Arial", 11)).pack(anchor=anchor)
+        msg_frame = tk.Frame(outer, bg=color, padx=10, pady=6)
+        msg_frame.pack(anchor="e" if sender == "You" else "w", padx=5, pady=2)
+
+        tk.Label(msg_frame, text=text, bg=color, fg="black", wraplength=540,
+                 justify=justify, font=("Arial", 11)).pack(anchor="e" if sender == "You" else "w")
 
         timestamp = datetime.datetime.now().strftime("%H:%M")
-        tk.Label(frame, text=f"{sender} • {timestamp}", bg="#ECECEC", fg="#777", font=("Arial", 8)).pack(anchor=anchor)
+        tk.Label(outer, text=f"{sender} • {timestamp}", bg="#ECECEC", fg="#777",
+                 font=("Arial", 8)).pack(anchor="e" if sender == "You" else "w")
 
         self.canvas.update_idletasks()
         self.canvas.yview_moveto(1)
         self.save_message(sender, text)
 
     def send_message(self, event=None):
-        text = self.input_box.get().strip()
+        text = self.input_box.get("1.0", tk.END).strip()
         if not text:
-            return
+            return "break"
         self.add_message("You", text)
-        self.input_box.delete(0, tk.END)
+        self.input_box.delete("1.0", tk.END)
         self.root.after(400, lambda: self.respond(text))
+        return "break"
 
     def respond(self, user_text):
-        """Generate simple smart responses."""
+        """Generate smart responses."""
         text = user_text.lower()
         if "hello" in text or "hi" in text:
             reply = "Hi there! 😊 Upload your files to get started."
@@ -119,7 +127,6 @@ class ChatBotApp:
             self.show_file_info(2, path)
 
     def show_file_info(self, file_num, path):
-        """Display basic file info in chat."""
         size = os.path.getsize(path)
         modified = time.ctime(os.path.getmtime(path))
         name = os.path.basename(path)
@@ -128,7 +135,6 @@ class ChatBotApp:
         self.add_message("Bot", info)
 
     def get_file_info(self):
-        """Return info of uploaded files."""
         if not self.file1 and not self.file2:
             return "No files uploaded yet. 📁"
         info = ""
@@ -159,7 +165,7 @@ class ChatBotApp:
                 differences.append(f"⚠ Files have different line counts ({len(lines1)} vs {len(lines2)}).")
 
             if differences:
-                diff_text = "\n\n".join(differences[:10])  # Show only first 10 differences
+                diff_text = "\n\n".join(differences[:10])
                 self.add_message("Bot", f"Found differences:\n{diff_text}")
             else:
                 self.add_message("Bot", "✅ The files are identical!")
@@ -169,11 +175,7 @@ class ChatBotApp:
     # ---------------- History ----------------
     def save_message(self, sender, text):
         history = self.load_history_data()
-        history.append({
-            "sender": sender,
-            "message": text,
-            "time": str(datetime.datetime.now())
-        })
+        history.append({"sender": sender, "message": text, "time": str(datetime.datetime.now())})
         with open(self.history_file, "w", encoding="utf-8") as f:
             json.dump(history, f, indent=4)
 
