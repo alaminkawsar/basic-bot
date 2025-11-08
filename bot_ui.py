@@ -24,8 +24,12 @@ class ChatBotApp:
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
 
         self.chat_frame = tk.Frame(self.canvas, bg="#ECECEC")
-        self.canvas.create_window((0, 0), window=self.chat_frame, anchor='nw')
+        # create window and keep its id so we can resize it when the main canvas size changes
+        self.window_id = self.canvas.create_window((0, 0), window=self.chat_frame, anchor='nw', width=self.canvas.winfo_width())
+        # update scrollregion when chat_frame changes
         self.chat_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        # ensure chat_frame width follows canvas width (dynamic resizing)
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
 
         # File button frame
         file_frame = tk.Frame(root, bg="#ECECEC")
@@ -38,17 +42,35 @@ class ChatBotApp:
         tk.Button(file_frame, text="⚖ Compare Files", bg="#28A745", fg="white",
                   font=("Arial", 10, "bold"), command=self.compare_files).pack(side=tk.RIGHT, padx=5)
 
-        # Input frame (larger text field)
-        input_frame = tk.Frame(root, bg="#ECECEC")
-        input_frame.pack(fill=tk.X, padx=10, pady=10)
+        # Input frame (larger text field) - made responsive and "pill" styled
+        input_container = tk.Frame(root, bg="#ECECEC")
+        input_container.pack(fill=tk.X, padx=10, pady=10)
 
-        self.input_box = tk.Text(input_frame, height=3, font=("Arial", 13), wrap=tk.WORD)
-        self.input_box.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        # We use a canvas to draw a rounded background (pill) and place the Text on top so it visually looks rounded.
+        self.input_bg = tk.Canvas(input_container, height=56, bg="#ECECEC", highlightthickness=0)
+        self.input_bg.pack(fill=tk.X, side=tk.LEFT, expand=True, padx=(0, 8))
+
+        # Draw rounded rect as input background; we'll redraw on resize
+        self._draw_input_bg()
+
+        # Text widget for multi-line input. We make it borderless so it appears inside the rounded bg.
+        self.input_box = tk.Text(self.input_bg, height=2, font=("Arial", 13), wrap=tk.WORD,
+                                 bg="#F6F6F6", bd=0, padx=10, pady=8, relief="flat")
+        # put text widget into the canvas
+        self.input_window = self.input_bg.create_window(12, 8, window=self.input_box, anchor='nw', width=self._input_text_width())
         self.input_box.bind("<Return>", self.send_message)
         self.input_box.bind("<Shift-Return>", lambda e: self.input_box.insert(tk.INSERT, "\n"))
 
-        tk.Button(input_frame, text="Send", bg="#0078D7", fg="white",
-                  font=("Arial", 12, "bold"), command=self.send_message).pack(side=tk.RIGHT)
+        # Custom rounded send button (canvas based for pill/rounded look)
+        self.send_btn_canvas = tk.Canvas(input_container, width=80, height=56, bg="#ECECEC", highlightthickness=0)
+        self.send_btn_canvas.pack(side=tk.RIGHT)
+        self._draw_send_button()
+        # bind send action to the send button canvas (both click and Enter key)
+        self.send_btn_canvas.tag_bind("send_btn", "<Button-1>", lambda e: self.send_message())
+        self.send_btn_canvas.tag_bind("send_btn", "<Enter>", lambda e: self.send_btn_canvas.config(cursor="hand2"))
+
+        # ensure elements adjust when window resizes
+        root.bind("<Configure>", self._on_root_configure)
 
         # Chat history
         self.history_file = "chat_history.json"
@@ -57,29 +79,127 @@ class ChatBotApp:
         if not self.chat_frame.winfo_children():
             self.add_message("Bot", "👋 Hello! I'm your AI File Assistant.\nYou can upload and compare files easily here.")
 
+    # ---------------- Dynamic layout helpers ----------------
+    def _on_canvas_configure(self, event):
+        # make the chat_frame window follow the canvas width so messages wrap properly when resizing
+        try:
+            self.canvas.itemconfigure(self.window_id, width=event.width)
+        except Exception:
+            pass
+
+    def _on_root_configure(self, event):
+        # redraw input background and move input text window to the new width
+        self._draw_input_bg()
+        try:
+            self.input_bg.coords(self.input_window, 12, 8)
+            self.input_bg.itemconfigure(self.input_window, width=self._input_text_width())
+        except Exception:
+            pass
+        # also redraw send button to center content if necessary
+        self._draw_send_button()
+
+    def _input_text_width(self):
+        # compute available width for the Text inside the input_bg
+        # subtract paddings and reserve space for send button
+        total = self.input_bg.winfo_width()
+        if not total or total < 100:
+            # fallback default width
+            return 560
+        return max(80, total - 24)
+
+    # ---------------- Rounded shapes ----------------
+    def _rounded_rect(self, canvas, x1, y1, x2, y2, r=10, **kwargs):
+        # Draw rounded rectangle by composing arcs and rectangles (approximated using a smooth polygon)
+        return canvas.create_polygon(
+            [
+                x1 + r, y1,
+                x2 - r, y1,
+                x2, y1 + r,
+                x2, y2 - r,
+                x2 - r, y2,
+                x1 + r, y2,
+                x1, y2 - r,
+                x1, y1 + r
+            ],
+            smooth=True,
+            splinesteps=12,
+            **kwargs
+        )
+
+    def _draw_input_bg(self):
+        self.input_bg.delete("all")
+        w = self.input_bg.winfo_width() or max(200, self.root.winfo_width() - 140)
+        h = 56
+        pad = 2
+        r = 28  # big radius for pill effect
+        bg_fill = "#F6F6F6"
+        self._rounded_rect(self.input_bg, pad, pad, max(w, 120) - pad, h - pad, r=r, fill=bg_fill, outline="#E0E0E0")
+
+    def _draw_send_button(self):
+        self.send_btn_canvas.delete("all")
+        w = self.send_btn_canvas.winfo_width() or 80
+        h = self.send_btn_canvas.winfo_height() or 56
+        r = 14
+        # draw rounded button background
+        btn_id = self._rounded_rect(self.send_btn_canvas, 6, 6, w - 6, h - 6, r=r, fill="#0078D7", outline="#0062B0")
+        # draw label inside
+        self.send_btn_canvas.create_text(w / 2, h / 2, text="Send", fill="white", font=("Arial", 11, "bold"), tags=("send_btn",))
+        # mark the rounded rect as clickable as well
+        self.send_btn_canvas.addtag_withtag("send_btn", btn_id)
+
     # ---------------- Chat UI ----------------
     def add_message(self, sender, text):
-        """Add message bubble with alignment and optional bot icon."""
+        """Add message bubble with alignment and rounded bubble using a small canvas per message."""
         outer = tk.Frame(self.chat_frame, bg="#ECECEC", pady=5)
-        outer.pack(anchor="e" if sender == "You" else "w", fill="x", padx=10)
+        outer.pack(fill="x", padx=10)
 
-        color = "#DCF8C6" if sender == "You" else "#FFFFFF"
-        justify = "right" if sender == "You" else "left"
+        # alignment and colors
+        align = "e" if sender == "You" else "w"
+        bubble_color = "#DCF8C6" if sender == "You" else "#FFFFFF"
+        text_color = "#000000"
 
-        # Add icon for bot
-        if sender == "Bot":
-            icon_label = tk.Label(outer, text="🤖", bg="#ECECEC", font=("Arial", 13))
-            icon_label.pack(side=tk.LEFT, anchor="w", padx=(0, 5))
+        # small canvas to paint rounded bubble and text
+        bubble_canvas = tk.Canvas(outer, bg="#ECECEC", highlightthickness=0)
+        # anchor it left or right
+        bubble_canvas.pack(anchor=align)
 
-        msg_frame = tk.Frame(outer, bg=color, padx=10, pady=6)
-        msg_frame.pack(anchor="e" if sender == "You" else "w", padx=5, pady=2)
+        # decide max width relative to the main canvas (responsive)
+        try:
+            max_bubble_w = min(520, int(self.canvas.winfo_width() * 0.75))
+            if max_bubble_w <= 0:
+                max_bubble_w = 520
+        except Exception:
+            max_bubble_w = 520
 
-        tk.Label(msg_frame, text=text, bg=color, fg="black", wraplength=540,
-                 justify=justify, font=("Arial", 11)).pack(anchor="e" if sender == "You" else "w")
+        # create the text first (wrapped)
+        text_id = bubble_canvas.create_text(12, 8, text=text, anchor="nw", font=("Arial", 11), fill=text_color, width=max_bubble_w)
+        bubble_canvas.update_idletasks()
+        bbox = bubble_canvas.bbox(text_id)  # (x1,y1,x2,y2)
+        if not bbox:
+            bbox = (0, 0, 10, 10)
+        pad_x = 12
+        pad_y = 8
+        x1 = bbox[0] - pad_x
+        y1 = bbox[1] - pad_y
+        x2 = bbox[2] + pad_x
+        y2 = bbox[3] + pad_y
+        w = x2 - x1
+        h = y2 - y1
+        # configure canvas to actual size
+        bubble_canvas.config(width=w, height=h)
+        # move text into new coordinates (we created text at 12,8 so shifting to pad position)
+        bubble_canvas.coords(text_id, pad_x, pad_y)
 
+        # draw rounded bubble behind the text
+        r = min(18, int(h / 2))
+        rect_id = self._rounded_rect(bubble_canvas, 0, 0, w, h, r=r, fill=bubble_color, outline="#EDEDED")
+        # ensure rectangle is behind text
+        bubble_canvas.tag_lower(rect_id, text_id)
+
+        # timestamp
         timestamp = datetime.datetime.now().strftime("%H:%M")
-        tk.Label(outer, text=f"{sender} • {timestamp}", bg="#ECECEC", fg="#777",
-                 font=("Arial", 8)).pack(anchor="e" if sender == "You" else "w")
+        meta = tk.Label(outer, text=f"{sender} • {timestamp}", bg="#ECECEC", fg="#777", font=("Arial", 8))
+        meta.pack(anchor=align)
 
         self.canvas.update_idletasks()
         self.canvas.yview_moveto(1)
@@ -88,10 +208,11 @@ class ChatBotApp:
     def send_message(self, event=None):
         text = self.input_box.get("1.0", tk.END).strip()
         if not text:
+            # prevent newline on Enter when text is empty
             return "break"
         self.add_message("You", text)
         self.input_box.delete("1.0", tk.END)
-        self.root.after(400, lambda: self.respond(text))
+        self.root.after(200, lambda: self.respond(text))
         return "break"
 
     def respond(self, user_text):
